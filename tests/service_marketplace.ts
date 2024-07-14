@@ -90,21 +90,21 @@ describe("service-marketplace", () => {
 
   it("Lists a service", async () => {
     const service = anchor.web3.Keypair.generate();
-    const serviceMint = await createMint(
-      provider.connection,
-      vendor,
-      vendor.publicKey,
-      null,
-      0
+    const [serviceMint] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("service_nft"),
+        service.publicKey.toBuffer()
+      ],
+      program.programId
     );
-
+  
     const metadata = {
       name: "Test Service",
       description: "A test service",
       price: new anchor.BN(100000000),
       isSoulbound: false,
     };
-
+  
     await program.methods
       .listService(metadata)
       .accounts({
@@ -112,26 +112,28 @@ describe("service-marketplace", () => {
         service: service.publicKey,
         vendor: vendor.publicKey,
         mint: serviceMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .signers([vendor, service])
       .rpc();
-
+  
     const serviceAccount = await program.account.service.fetch(service.publicKey);
     expect(serviceAccount.vendor.toString()).to.equal(vendor.publicKey.toString());
     expect(serviceAccount.metadata.name).to.equal(metadata.name);
     expect(serviceAccount.metadata.price.toNumber()).to.equal(metadata.price.toNumber());
     expect(serviceAccount.isAvailable).to.be.true;
-  });
-
+});
+  
   it("Purchases a service", async () => {
     const service = anchor.web3.Keypair.generate();
-    const serviceMint = await createMint(
-      provider.connection,
-      vendor,
-      vendor.publicKey,
-      null,
-      0
+    const [serviceMint] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("service_nft"),
+        service.publicKey.toBuffer(),
+      ],
+      program.programId
     );
 
     const metadata = {
@@ -141,6 +143,7 @@ describe("service-marketplace", () => {
       isSoulbound: false,
     };
 
+    // List the service
     await program.methods
       .listService(metadata)
       .accounts({
@@ -148,17 +151,18 @@ describe("service-marketplace", () => {
         service: service.publicKey,
         vendor: vendor.publicKey,
         mint: serviceMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .signers([vendor, service])
       .rpc();
 
-    const buyerNftAccount = await createAccount(
-      provider.connection,
-      buyer,
-      serviceMint,
-      buyer.publicKey
-    );
+    // Now we can purchase the service
+    const buyerNftAccount = await anchor.utils.token.associatedAddress({
+      mint: serviceMint,
+      owner: buyer.publicKey
+    });
 
     await program.methods
       .purchaseService()
@@ -188,12 +192,12 @@ describe("service-marketplace", () => {
 
   it("Resells a service", async () => {
     const service = anchor.web3.Keypair.generate();
-    const serviceMint = await createMint(
-      provider.connection,
-      vendor,
-      vendor.publicKey,
-      null,
-      0
+    const [serviceMint] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("service_nft"),
+        service.publicKey.toBuffer(),
+      ],
+      program.programId
     );
 
     const metadata = {
@@ -203,6 +207,7 @@ describe("service-marketplace", () => {
       isSoulbound: false,
     };
 
+    // List the service
     await program.methods
       .listService(metadata)
       .accounts({
@@ -210,33 +215,42 @@ describe("service-marketplace", () => {
         service: service.publicKey,
         vendor: vendor.publicKey,
         mint: serviceMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .signers([vendor, service])
       .rpc();
 
-    const sellerNftAccount = await createAccount(
-      provider.connection,
-      vendor,
-      serviceMint,
-      vendor.publicKey
-    );
+    const sellerNftAccount = await anchor.utils.token.associatedAddress({
+      mint: serviceMint,
+      owner: vendor.publicKey
+    });
 
-    await mintTo(
-      provider.connection,
-      vendor,
-      serviceMint,
-      sellerNftAccount,
-      vendor,
-      1
-    );
+    const buyerNftAccount = await anchor.utils.token.associatedAddress({
+      mint: serviceMint,
+      owner: buyer.publicKey
+    });
 
-    const buyerNftAccount = await createAccount(
-      provider.connection,
-      buyer,
-      serviceMint,
-      buyer.publicKey
-    );
+    // Mint NFT to seller (simulating a previous purchase)
+    await program.methods
+      .purchaseService()
+      .accounts({
+        marketplace: marketplace.publicKey,
+        service: service.publicKey,
+        buyer: vendor.publicKey,
+        vendor: vendor.publicKey,
+        mint: serviceMint,
+        buyerTokenAccount: vendorTokenAccount,
+        vendorTokenAccount: vendorTokenAccount,
+        buyerNftAccount: sellerNftAccount,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([vendor])
+      .rpc();
 
     const newPrice = new anchor.BN(150000000);
 

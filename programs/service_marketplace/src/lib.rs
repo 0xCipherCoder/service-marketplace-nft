@@ -28,23 +28,22 @@ pub mod service_marketplace {
     ) -> Result<()> {
         let marketplace = &mut ctx.accounts.marketplace;
         let service = &mut ctx.accounts.service;
-
+    
         service.vendor = ctx.accounts.vendor.key();
         service.metadata = metadata;
         service.mint = ctx.accounts.mint.key();
         service.is_available = true;
-
+    
         marketplace.service_count += 1;
-
+    
         Ok(())
     }
 
     pub fn purchase_service(ctx: Context<PurchaseService>) -> Result<()> {
-        let service = &mut ctx.accounts.service;
-        require!(service.is_available, MarketplaceError::ServiceNotAvailable);
-
-        let price = service.metadata.price;
-
+        require!(ctx.accounts.service.is_available, MarketplaceError::ServiceNotAvailable);
+    
+        let price = ctx.accounts.service.metadata.price;
+    
         // Transfer tokens from buyer to vendor
         token::transfer(
             CpiContext::new(
@@ -57,22 +56,29 @@ pub mod service_marketplace {
             ),
             price,
         )?;
-
+    
         // Mint NFT to buyer
         token::mint_to(
-            CpiContext::new(
+            CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 token::MintTo {
                     mint: ctx.accounts.mint.to_account_info(),
                     to: ctx.accounts.buyer_nft_account.to_account_info(),
                     authority: ctx.accounts.mint.to_account_info(),
                 },
+                &[&[
+                    b"service_nft",
+                    ctx.accounts.service.key().as_ref(),
+                    &[ctx.bumps.mint],
+                ]],
             ),
             1,
         )?;
-
+    
+        // Now we can mutably borrow service
+        let service = &mut ctx.accounts.service;
         service.is_available = false;
-
+    
         Ok(())
     }
 
@@ -179,8 +185,18 @@ pub struct ListService<'info> {
     pub service: Account<'info, Service>,
     #[account(mut)]
     pub vendor: Signer<'info>,
+    #[account(
+        init,
+        payer = vendor,
+        seeds = [b"service_nft", service.key().as_ref()],
+        bump,
+        mint::decimals = 0,
+        mint::authority = mint,
+    )]
     pub mint: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -193,14 +209,18 @@ pub struct PurchaseService<'info> {
     pub buyer: Signer<'info>,
     /// CHECK: This is not dangerous because we don't read or write from this account
     pub vendor: AccountInfo<'info>,
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"service_nft", service.key().as_ref()],
+        bump
+    )]
     pub mint: Account<'info, Mint>,
     #[account(mut)]
     pub buyer_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub vendor_token_account: Account<'info, TokenAccount>,
     #[account(
-        init_if_needed,
+        init,
         payer = buyer,
         associated_token::mint = mint,
         associated_token::authority = buyer
@@ -221,6 +241,10 @@ pub struct ResellService<'info> {
     pub seller: Signer<'info>,
     #[account(mut)]
     pub buyer: Signer<'info>,
+    #[account(
+        seeds = [b"service_nft", service.key().as_ref()],
+        bump
+    )]
     pub mint: Account<'info, Mint>,
     #[account(mut)]
     pub seller_nft_account: Account<'info, TokenAccount>,
