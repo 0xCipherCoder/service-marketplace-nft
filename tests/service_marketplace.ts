@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { ServiceMarketplace } from "../target/types/service_marketplace";
-import { TOKEN_PROGRAM_ID, createMint, createAccount, mintTo } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, createMint, createAccount, mintTo, createAssociatedTokenAccount } from "@solana/spl-token";
 import { expect } from "chai";
 
 describe("service-marketplace", () => {
@@ -254,6 +254,20 @@ describe("service-marketplace", () => {
 
     const newPrice = new anchor.BN(150000000);
 
+    // Ensure buyer's associated token account is initialized
+    try {
+      await createAssociatedTokenAccount(
+        provider.connection,
+        buyer,
+        serviceMint,
+        buyer.publicKey
+      );
+    } catch (error) {
+      if (!error.message.includes("already in use")) {
+        throw error;
+      }
+    }
+
     await program.methods
       .resellService(newPrice)
       .accounts({
@@ -272,8 +286,8 @@ describe("service-marketplace", () => {
       .signers([vendor, buyer])
       .rpc();
 
-    const serviceAccount = await program.account.service.fetch(service.publicKey);
-    expect(serviceAccount.metadata.price.toNumber()).to.equal(newPrice.toNumber());
+    const updatedServiceAccount = await program.account.service.fetch(service.publicKey);
+    expect(updatedServiceAccount.metadata.price.toNumber()).to.equal(newPrice.toNumber());
 
     const buyerNftBalance = await provider.connection.getTokenAccountBalance(buyerNftAccount);
     expect(buyerNftBalance.value.uiAmount).to.equal(1);
